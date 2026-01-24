@@ -7,11 +7,18 @@ pub const ChaCha20 = struct {
         0x61707865, 0x3320646e, 0x79622d32, 0x6b206574,
     };
 
+    const one_vec = @Vector(4, u32){ 1, 0, 0, 0 };
+    const two_vec = @Vector(4, u32){ 2, 0, 0, 0 };
+    const three_vec = @Vector(4, u32){ 3, 0, 0, 0 };
+    const four_vec = @Vector(4, u32){ 4, 0, 0, 0 };
+
     pub fn init(key: *const [32]u8, nonce: *const [12]u8, counter: u32) ChaCha20 {
         var state: [4]@Vector(4, u32) = undefined;
 
         state[0] = constants;
 
+        //does this become single copy? (have to check)
+        //not in hot path but still
         const k0 = std.mem.bytesAsSlice(u32, key[0..16]);
         const k1 = std.mem.bytesAsSlice(u32, key[16..32]);
         state[1] = @Vector(4, u32){ k0[0], k0[1], k0[2], k0[3] };
@@ -22,7 +29,8 @@ pub const ChaCha20 = struct {
 
         return ChaCha20{ .state = state };
     }
-    fn quarterRound(a: *@Vector(4, u32), b: *@Vector(4, u32), c: *@Vector(4, u32), d: *@Vector(4, u32)) void {
+
+    inline fn quarterRound(a: *@Vector(4, u32), b: *@Vector(4, u32), c: *@Vector(4, u32), d: *@Vector(4, u32)) void {
         a.* +%= b.*;
         d.* ^= a.*;
         d.* = rotlVector(d.*, 16);
@@ -37,67 +45,341 @@ pub const ChaCha20 = struct {
         b.* = rotlVector(b.*, 7);
     }
 
-    fn rotlVector(v: @Vector(4, u32), amt: u5) @Vector(4, u32) {
+    inline fn rotlVector(v: @Vector(4, u32), amt: u5) @Vector(4, u32) {
         const shift_l = @as(@Vector(4, u5), @splat(amt));
         const shift_r = @as(@Vector(4, u5), @splat(0 -% amt));
         return (v << shift_l) | (v >> shift_r);
     }
 
-    fn generateBlock(self: *ChaCha20, output: *[64]u8) void {
-        var a = self.state[0];
-        var b = self.state[1];
-        var c = self.state[2];
-        var d = self.state[3];
-
-        for (0..10) |_| {
-            quarterRound(&a, &b, &c, &d);
-
-            b = @shuffle(u32, b, undefined, [4]i32{ 1, 2, 3, 0 });
-            c = @shuffle(u32, c, undefined, [4]i32{ 2, 3, 0, 1 });
-            d = @shuffle(u32, d, undefined, [4]i32{ 3, 0, 1, 2 });
-
-            quarterRound(&a, &b, &c, &d);
-
-            b = @shuffle(u32, b, undefined, [4]i32{ 3, 0, 1, 2 });
-            c = @shuffle(u32, c, undefined, [4]i32{ 2, 3, 0, 1 });
-            d = @shuffle(u32, d, undefined, [4]i32{ 1, 2, 3, 0 });
-        }
-        a +%= self.state[0];
-        b +%= self.state[1];
-        c +%= self.state[2];
-        d +%= self.state[3];
-
-        const rows = [4]@Vector(4, u32){ a, b, c, d };
-        var ptr: [*]u8 = output;
-
-        inline for (rows) |row| {
-            const arr: [4]u32 = row;
-            for (arr) |val| {
-                std.mem.writeInt(u32, ptr[0..4], val, .little);
-                ptr += 4;
-            }
-        }
-
-        var last_row: [4]u32 = self.state[3];
-        last_row[0] +%= 1;
-        self.state[3] = last_row;
-    }
-
     pub fn xor(self: *ChaCha20, dest: []u8, input: []const u8) void {
-        var block: [64]u8 = undefined;
         var i: usize = 0;
+        while (i + 256 <= input.len) {
+            var a1 = self.state[0];
+            var b1 = self.state[1];
+            var c1 = self.state[2];
+            var d1 = self.state[3];
 
-        while (i < input.len) {
-            self.generateBlock(&block);
+            var a2 = a1;
+            var b2 = b1;
+            var c2 = c1;
+            var d2 = d1 +% one_vec;
 
-            const remaining = input.len - i;
-            const size = if (remaining < 64) remaining else 64;
+            var a3 = a1;
+            var b3 = b1;
+            var c3 = c1;
+            var d3 = d1 +% two_vec;
 
-            for (0..size) |j| {
-                dest[i + j] = input[i + j] ^ block[j];
+            var a4 = a1;
+            var b4 = b1;
+            var c4 = c1;
+            var d4 = d1 +% three_vec;
+
+            @setEvalBranchQuota(50000);
+            inline for (0..10) |_| {
+                quarterRound(&a1, &b1, &c1, &d1);
+                quarterRound(&a2, &b2, &c2, &d2);
+                quarterRound(&a3, &b3, &c3, &d3);
+                quarterRound(&a4, &b4, &c4, &d4);
+
+                b1 = @shuffle(u32, b1, undefined, [4]i32{ 1, 2, 3, 0 });
+                c1 = @shuffle(u32, c1, undefined, [4]i32{ 2, 3, 0, 1 });
+                d1 = @shuffle(u32, d1, undefined, [4]i32{ 3, 0, 1, 2 });
+
+                b2 = @shuffle(u32, b2, undefined, [4]i32{ 1, 2, 3, 0 });
+                c2 = @shuffle(u32, c2, undefined, [4]i32{ 2, 3, 0, 1 });
+                d2 = @shuffle(u32, d2, undefined, [4]i32{ 3, 0, 1, 2 });
+
+                b3 = @shuffle(u32, b3, undefined, [4]i32{ 1, 2, 3, 0 });
+                c3 = @shuffle(u32, c3, undefined, [4]i32{ 2, 3, 0, 1 });
+                d3 = @shuffle(u32, d3, undefined, [4]i32{ 3, 0, 1, 2 });
+
+                b4 = @shuffle(u32, b4, undefined, [4]i32{ 1, 2, 3, 0 });
+                c4 = @shuffle(u32, c4, undefined, [4]i32{ 2, 3, 0, 1 });
+                d4 = @shuffle(u32, d4, undefined, [4]i32{ 3, 0, 1, 2 });
+
+                quarterRound(&a1, &b1, &c1, &d1);
+                quarterRound(&a2, &b2, &c2, &d2);
+                quarterRound(&a3, &b3, &c3, &d3);
+                quarterRound(&a4, &b4, &c4, &d4);
+
+                b1 = @shuffle(u32, b1, undefined, [4]i32{ 3, 0, 1, 2 });
+                c1 = @shuffle(u32, c1, undefined, [4]i32{ 2, 3, 0, 1 });
+                d1 = @shuffle(u32, d1, undefined, [4]i32{ 1, 2, 3, 0 });
+
+                b2 = @shuffle(u32, b2, undefined, [4]i32{ 3, 0, 1, 2 });
+                c2 = @shuffle(u32, c2, undefined, [4]i32{ 2, 3, 0, 1 });
+                d2 = @shuffle(u32, d2, undefined, [4]i32{ 1, 2, 3, 0 });
+
+                b3 = @shuffle(u32, b3, undefined, [4]i32{ 3, 0, 1, 2 });
+                c3 = @shuffle(u32, c3, undefined, [4]i32{ 2, 3, 0, 1 });
+                d3 = @shuffle(u32, d3, undefined, [4]i32{ 1, 2, 3, 0 });
+
+                b4 = @shuffle(u32, b4, undefined, [4]i32{ 3, 0, 1, 2 });
+                c4 = @shuffle(u32, c4, undefined, [4]i32{ 2, 3, 0, 1 });
+                d4 = @shuffle(u32, d4, undefined, [4]i32{ 1, 2, 3, 0 });
             }
 
-            i += size;
+            a1 +%= self.state[0];
+            b1 +%= self.state[1];
+            c1 +%= self.state[2];
+            d1 +%= self.state[3];
+            a2 +%= self.state[0];
+            b2 +%= self.state[1];
+            c2 +%= self.state[2];
+            d2 +%= self.state[3] +% one_vec;
+            a3 +%= self.state[0];
+            b3 +%= self.state[1];
+            c3 +%= self.state[2];
+            d3 +%= self.state[3] +% two_vec;
+            a4 +%= self.state[0];
+            b4 +%= self.state[1];
+            c4 +%= self.state[2];
+            d4 +%= self.state[3] +% three_vec;
+
+            const in_ptr = @as([*]align(1) const @Vector(4, u32), @ptrCast(input[i..].ptr));
+            const out_ptr = @as([*]align(1) @Vector(4, u32), @ptrCast(dest[i..].ptr));
+
+            out_ptr[0] = in_ptr[0] ^ a1;
+            out_ptr[1] = in_ptr[1] ^ b1;
+            out_ptr[2] = in_ptr[2] ^ c1;
+            out_ptr[3] = in_ptr[3] ^ d1;
+
+            out_ptr[4] = in_ptr[4] ^ a2;
+            out_ptr[5] = in_ptr[5] ^ b2;
+            out_ptr[6] = in_ptr[6] ^ c2;
+            out_ptr[7] = in_ptr[7] ^ d2;
+
+            out_ptr[8] = in_ptr[8] ^ a3;
+            out_ptr[9] = in_ptr[9] ^ b3;
+            out_ptr[10] = in_ptr[10] ^ c3;
+            out_ptr[11] = in_ptr[11] ^ d3;
+
+            out_ptr[12] = in_ptr[12] ^ a4;
+            out_ptr[13] = in_ptr[13] ^ b4;
+            out_ptr[14] = in_ptr[14] ^ c4;
+            out_ptr[15] = in_ptr[15] ^ d4;
+
+            self.state[3] +%= four_vec;
+            i += 256;
+        }
+        while (i + 192 <= input.len) {
+            var a1 = self.state[0];
+            var b1 = self.state[1];
+            var c1 = self.state[2];
+            var d1 = self.state[3];
+
+            var a2 = a1;
+            var b2 = b1;
+            var c2 = c1;
+            var d2 = d1 +% one_vec;
+
+            var a3 = a1;
+            var b3 = b1;
+            var c3 = c1;
+            var d3 = d1 +% two_vec;
+
+            inline for (0..10) |_| {
+                quarterRound(&a1, &b1, &c1, &d1);
+                quarterRound(&a2, &b2, &c2, &d2);
+                quarterRound(&a3, &b3, &c3, &d3);
+
+                b1 = @shuffle(u32, b1, undefined, [4]i32{ 1, 2, 3, 0 });
+                c1 = @shuffle(u32, c1, undefined, [4]i32{ 2, 3, 0, 1 });
+                d1 = @shuffle(u32, d1, undefined, [4]i32{ 3, 0, 1, 2 });
+
+                b2 = @shuffle(u32, b2, undefined, [4]i32{ 1, 2, 3, 0 });
+                c2 = @shuffle(u32, c2, undefined, [4]i32{ 2, 3, 0, 1 });
+                d2 = @shuffle(u32, d2, undefined, [4]i32{ 3, 0, 1, 2 });
+
+                b3 = @shuffle(u32, b3, undefined, [4]i32{ 1, 2, 3, 0 });
+                c3 = @shuffle(u32, c3, undefined, [4]i32{ 2, 3, 0, 1 });
+                d3 = @shuffle(u32, d3, undefined, [4]i32{ 3, 0, 1, 2 });
+
+                quarterRound(&a1, &b1, &c1, &d1);
+                quarterRound(&a2, &b2, &c2, &d2);
+                quarterRound(&a3, &b3, &c3, &d3);
+
+                b1 = @shuffle(u32, b1, undefined, [4]i32{ 3, 0, 1, 2 });
+                c1 = @shuffle(u32, c1, undefined, [4]i32{ 2, 3, 0, 1 });
+                d1 = @shuffle(u32, d1, undefined, [4]i32{ 1, 2, 3, 0 });
+
+                b2 = @shuffle(u32, b2, undefined, [4]i32{ 3, 0, 1, 2 });
+                c2 = @shuffle(u32, c2, undefined, [4]i32{ 2, 3, 0, 1 });
+                d2 = @shuffle(u32, d2, undefined, [4]i32{ 1, 2, 3, 0 });
+
+                b3 = @shuffle(u32, b3, undefined, [4]i32{ 3, 0, 1, 2 });
+                c3 = @shuffle(u32, c3, undefined, [4]i32{ 2, 3, 0, 1 });
+                d3 = @shuffle(u32, d3, undefined, [4]i32{ 1, 2, 3, 0 });
+            }
+
+            a1 +%= self.state[0];
+            b1 +%= self.state[1];
+            c1 +%= self.state[2];
+            d1 +%= self.state[3];
+            a2 +%= self.state[0];
+            b2 +%= self.state[1];
+            c2 +%= self.state[2];
+            d2 +%= self.state[3] +% one_vec;
+            a3 +%= self.state[0];
+            b3 +%= self.state[1];
+            c3 +%= self.state[2];
+            d3 +%= self.state[3] +% two_vec;
+
+            const in_ptr = @as([*]align(1) const @Vector(4, u32), @ptrCast(input[i..].ptr));
+            const out_ptr = @as([*]align(1) @Vector(4, u32), @ptrCast(dest[i..].ptr));
+
+            out_ptr[0] = in_ptr[0] ^ a1;
+            out_ptr[1] = in_ptr[1] ^ b1;
+            out_ptr[2] = in_ptr[2] ^ c1;
+            out_ptr[3] = in_ptr[3] ^ d1;
+
+            out_ptr[4] = in_ptr[4] ^ a2;
+            out_ptr[5] = in_ptr[5] ^ b2;
+            out_ptr[6] = in_ptr[6] ^ c2;
+            out_ptr[7] = in_ptr[7] ^ d2;
+
+            out_ptr[8] = in_ptr[8] ^ a3;
+            out_ptr[9] = in_ptr[9] ^ b3;
+            out_ptr[10] = in_ptr[10] ^ c3;
+            out_ptr[11] = in_ptr[11] ^ d3;
+
+            self.state[3] +%= three_vec;
+            i += 192;
+        }
+        while (i + 128 <= input.len) {
+            var a1 = self.state[0];
+            var b1 = self.state[1];
+            var c1 = self.state[2];
+            var d1 = self.state[3];
+
+            var a2 = a1;
+            var b2 = b1;
+            var c2 = c1;
+            var d2 = d1 +% one_vec;
+            inline for (0..10) |_| {
+                quarterRound(&a1, &b1, &c1, &d1);
+                quarterRound(&a2, &b2, &c2, &d2);
+
+                b1 = @shuffle(u32, b1, undefined, [4]i32{ 1, 2, 3, 0 });
+                c1 = @shuffle(u32, c1, undefined, [4]i32{ 2, 3, 0, 1 });
+                d1 = @shuffle(u32, d1, undefined, [4]i32{ 3, 0, 1, 2 });
+
+                b2 = @shuffle(u32, b2, undefined, [4]i32{ 1, 2, 3, 0 });
+                c2 = @shuffle(u32, c2, undefined, [4]i32{ 2, 3, 0, 1 });
+                d2 = @shuffle(u32, d2, undefined, [4]i32{ 3, 0, 1, 2 });
+
+                quarterRound(&a1, &b1, &c1, &d1);
+                quarterRound(&a2, &b2, &c2, &d2);
+
+                b1 = @shuffle(u32, b1, undefined, [4]i32{ 3, 0, 1, 2 });
+                c1 = @shuffle(u32, c1, undefined, [4]i32{ 2, 3, 0, 1 });
+                d1 = @shuffle(u32, d1, undefined, [4]i32{ 1, 2, 3, 0 });
+
+                b2 = @shuffle(u32, b2, undefined, [4]i32{ 3, 0, 1, 2 });
+                c2 = @shuffle(u32, c2, undefined, [4]i32{ 2, 3, 0, 1 });
+                d2 = @shuffle(u32, d2, undefined, [4]i32{ 1, 2, 3, 0 });
+            }
+
+            a1 +%= self.state[0];
+            b1 +%= self.state[1];
+            c1 +%= self.state[2];
+            d1 +%= self.state[3];
+
+            a2 +%= self.state[0];
+            b2 +%= self.state[1];
+            c2 +%= self.state[2];
+            d2 +%= self.state[3] +% one_vec;
+
+            const in_ptr = @as([*]align(1) const @Vector(4, u32), @ptrCast(input[i..].ptr));
+            const out_ptr = @as([*]align(1) @Vector(4, u32), @ptrCast(dest[i..].ptr));
+
+            out_ptr[0] = in_ptr[0] ^ a1;
+            out_ptr[1] = in_ptr[1] ^ b1;
+            out_ptr[2] = in_ptr[2] ^ c1;
+            out_ptr[3] = in_ptr[3] ^ d1;
+
+            out_ptr[4] = in_ptr[4] ^ a2;
+            out_ptr[5] = in_ptr[5] ^ b2;
+            out_ptr[6] = in_ptr[6] ^ c2;
+            out_ptr[7] = in_ptr[7] ^ d2;
+
+            // Increment master counter by 2
+            self.state[3] +%= two_vec;
+            i += 128;
+        }
+
+        while (i + 64 <= input.len) {
+            var a = self.state[0];
+            var b = self.state[1];
+            var c = self.state[2];
+            var d = self.state[3];
+
+            inline for (0..10) |_| {
+                quarterRound(&a, &b, &c, &d);
+
+                b = @shuffle(u32, b, undefined, [4]i32{ 1, 2, 3, 0 });
+                c = @shuffle(u32, c, undefined, [4]i32{ 2, 3, 0, 1 });
+                d = @shuffle(u32, d, undefined, [4]i32{ 3, 0, 1, 2 });
+
+                quarterRound(&a, &b, &c, &d);
+
+                b = @shuffle(u32, b, undefined, [4]i32{ 3, 0, 1, 2 });
+                c = @shuffle(u32, c, undefined, [4]i32{ 2, 3, 0, 1 });
+                d = @shuffle(u32, d, undefined, [4]i32{ 1, 2, 3, 0 });
+            }
+
+            a +%= self.state[0];
+            b +%= self.state[1];
+            c +%= self.state[2];
+            d +%= self.state[3];
+
+            const in_ptr = @as([*]align(1) const @Vector(4, u32), @ptrCast(input[i..].ptr));
+            const out_ptr = @as([*]align(1) @Vector(4, u32), @ptrCast(dest[i..].ptr));
+
+            out_ptr[0] = in_ptr[0] ^ a;
+            out_ptr[1] = in_ptr[1] ^ b;
+            out_ptr[2] = in_ptr[2] ^ c;
+            out_ptr[3] = in_ptr[3] ^ d;
+
+            self.state[3] +%= one_vec;
+
+            i += 64;
+        }
+
+        if (i < input.len) {
+            var block: [64]u8 = undefined;
+            var a = self.state[0];
+            var b = self.state[1];
+            var c = self.state[2];
+            var d = self.state[3];
+            inline for (0..10) |_| {
+                quarterRound(&a, &b, &c, &d);
+                b = @shuffle(u32, b, undefined, [4]i32{ 1, 2, 3, 0 });
+                c = @shuffle(u32, c, undefined, [4]i32{ 2, 3, 0, 1 });
+                d = @shuffle(u32, d, undefined, [4]i32{ 3, 0, 1, 2 });
+                quarterRound(&a, &b, &c, &d);
+                b = @shuffle(u32, b, undefined, [4]i32{ 3, 0, 1, 2 });
+                c = @shuffle(u32, c, undefined, [4]i32{ 2, 3, 0, 1 });
+                d = @shuffle(u32, d, undefined, [4]i32{ 1, 2, 3, 0 });
+            }
+            a +%= self.state[0];
+            b +%= self.state[1];
+            c +%= self.state[2];
+            d +%= self.state[3];
+
+            const rows = [4]@Vector(4, u32){ a, b, c, d };
+            var ptr: [*]u8 = &block;
+            inline for (rows) |row| {
+                const arr: [4]u32 = row;
+                inline for (arr) |val| {
+                    std.mem.writeInt(u32, ptr[0..4], val, .little);
+                    ptr += 4;
+                }
+            }
+
+            while (i < input.len) : (i += 1) {
+                dest[i] = input[i] ^ block[i % 64];
+            }
         }
     }
 };
