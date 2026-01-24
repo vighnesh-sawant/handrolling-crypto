@@ -1,73 +1,86 @@
 const std = @import("std");
 
 pub const ChaCha20 = struct {
-    state: [16]u32,
+    state: [4]@Vector(4, u32),
 
-    const constants = [4]u32{
+    const constants = @Vector(4, u32){
         0x61707865, 0x3320646e, 0x79622d32, 0x6b206574,
     };
 
     pub fn init(key: *const [32]u8, nonce: *const [12]u8, counter: u32) ChaCha20 {
-        var state: [16]u32 = undefined;
+        var state: [4]@Vector(4, u32) = undefined;
 
-        state[0] = constants[0];
-        state[1] = constants[1];
-        state[2] = constants[2];
-        state[3] = constants[3];
+        state[0] = constants;
 
-        for (0..8) |i| {
-            state[4 + i] = std.mem.readInt(u32, key[i * 4 ..][0..4], .little);
-        }
+        const k0 = std.mem.bytesAsSlice(u32, key[0..16]);
+        const k1 = std.mem.bytesAsSlice(u32, key[16..32]);
+        state[1] = @Vector(4, u32){ k0[0], k0[1], k0[2], k0[3] };
+        state[2] = @Vector(4, u32){ k1[0], k1[1], k1[2], k1[3] };
 
-        state[12] = counter;
-
-        for (0..3) |i| {
-            state[13 + i] = std.mem.readInt(u32, nonce[i * 4 ..][0..4], .little);
-        }
+        const n = std.mem.bytesAsSlice(u32, nonce[0..12]);
+        state[3] = @Vector(4, u32){ counter, n[0], n[1], n[2] };
 
         return ChaCha20{ .state = state };
     }
-    fn quarterRound(x: *[16]u32, a: usize, b: usize, c: usize, d: usize) void {
-        x[a] +%= x[b];
-        x[d] ^= x[a];
-        x[d] = std.math.rotl(u32, x[d], 16);
-
-        x[c] +%= x[d];
-        x[b] ^= x[c];
-        x[b] = std.math.rotl(u32, x[b], 12);
-
-        x[a] +%= x[b];
-        x[d] ^= x[a];
-        x[d] = std.math.rotl(u32, x[d], 8);
-
-        x[c] +%= x[d];
-        x[b] ^= x[c];
-        x[b] = std.math.rotl(u32, x[b], 7);
+    fn quarterRound(a: *@Vector(4, u32), b: *@Vector(4, u32), c: *@Vector(4, u32), d: *@Vector(4, u32)) void {
+        a.* +%= b.*;
+        d.* ^= a.*;
+        d.* = rotlVector(d.*, 16);
+        c.* +%= d.*;
+        b.* ^= c.*;
+        b.* = rotlVector(b.*, 12);
+        a.* +%= b.*;
+        d.* ^= a.*;
+        d.* = rotlVector(d.*, 8);
+        c.* +%= d.*;
+        b.* ^= c.*;
+        b.* = rotlVector(b.*, 7);
     }
+
+    fn rotlVector(v: @Vector(4, u32), amt: u5) @Vector(4, u32) {
+        const shift_l = @as(@Vector(4, u5), @splat(amt));
+        const shift_r = @as(@Vector(4, u5), @splat(0 -% amt));
+        return (v << shift_l) | (v >> shift_r);
+    }
+
     fn generateBlock(self: *ChaCha20, output: *[64]u8) void {
-        var x = self.state;
+        var a = self.state[0];
+        var b = self.state[1];
+        var c = self.state[2];
+        var d = self.state[3];
 
         for (0..10) |_| {
-            quarterRound(&x, 0, 4, 8, 12);
-            quarterRound(&x, 1, 5, 9, 13);
-            quarterRound(&x, 2, 6, 10, 14);
-            quarterRound(&x, 3, 7, 11, 15);
+            quarterRound(&a, &b, &c, &d);
 
-            quarterRound(&x, 0, 5, 10, 15);
-            quarterRound(&x, 1, 6, 11, 12);
-            quarterRound(&x, 2, 7, 8, 13);
-            quarterRound(&x, 3, 4, 9, 14);
+            b = @shuffle(u32, b, undefined, [4]i32{ 1, 2, 3, 0 });
+            c = @shuffle(u32, c, undefined, [4]i32{ 2, 3, 0, 1 });
+            d = @shuffle(u32, d, undefined, [4]i32{ 3, 0, 1, 2 });
+
+            quarterRound(&a, &b, &c, &d);
+
+            b = @shuffle(u32, b, undefined, [4]i32{ 3, 0, 1, 2 });
+            c = @shuffle(u32, c, undefined, [4]i32{ 2, 3, 0, 1 });
+            d = @shuffle(u32, d, undefined, [4]i32{ 1, 2, 3, 0 });
+        }
+        a +%= self.state[0];
+        b +%= self.state[1];
+        c +%= self.state[2];
+        d +%= self.state[3];
+
+        const rows = [4]@Vector(4, u32){ a, b, c, d };
+        var ptr: [*]u8 = output;
+
+        inline for (rows) |row| {
+            const arr: [4]u32 = row;
+            for (arr) |val| {
+                std.mem.writeInt(u32, ptr[0..4], val, .little);
+                ptr += 4;
+            }
         }
 
-        for (0..16) |i| {
-            x[i] +%= self.state[i];
-        }
-
-        for (0..16) |i| {
-            std.mem.writeInt(u32, output[i * 4 ..][0..4], x[i], .little);
-        }
-
-        self.state[12] +%= 1;
+        var last_row: [4]u32 = self.state[3];
+        last_row[0] +%= 1;
+        self.state[3] = last_row;
     }
 
     pub fn xor(self: *ChaCha20, dest: []u8, input: []const u8) void {
