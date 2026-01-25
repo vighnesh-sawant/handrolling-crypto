@@ -3,6 +3,7 @@ const time = std.time;
 const mem = std.mem;
 
 const CustomChaCha = @import("root.zig").ChaCha20;
+const CustomPoly1305 = @import("poly1305.zig").Poly1305;
 
 const DATA_SIZE = 1024 * 1024 * 100;
 const CHUNK_SIZE = 4096;
@@ -48,7 +49,7 @@ pub fn main() !void {
         }
 
         const ns = timer.read();
-        printStats(stdout, "StdLib (SIMD)", total_bytes, ns);
+        printStats(stdout, "StdLib ", total_bytes, ns);
     }
 
     try stdout.flush();
@@ -69,8 +70,41 @@ pub fn main() !void {
         }
 
         const ns = timer.read();
-        printStats(stdout, "Custom Impl  ", total_bytes, ns);
+        printStats(stdout, "Custom Impl ", total_bytes, ns);
     }
+    try stdout.flush();
+    try stdout.print("\nRunning Poly1305 Benchmark...\n", .{});
+    try stdout.print("--------------------------------------------------\n", .{});
+    try stdout.flush();
+    const size = 256 * 1024 * 1024;
+    const buffer = try allocator.alloc(u8, size);
+    defer allocator.free(buffer);
+    @memset(buffer, 0xAA);
+
+    var tag: [16]u8 = undefined;
+
+    {
+        var timer = try std.time.Timer.start();
+
+        var poly = std.crypto.onetimeauth.Poly1305.init(&key);
+        poly.update(buffer);
+        poly.final(&tag);
+        std.mem.doNotOptimizeAway(&tag);
+
+        const ns = timer.read();
+        printStats(stdout, "StdLib Poly1305", size, ns);
+    }
+    {
+        var timer = try std.time.Timer.start();
+
+        var poly = CustomPoly1305.init(&key);
+        poly.update(buffer);
+        poly.finish(&tag);
+        std.mem.doNotOptimizeAway(&tag);
+        const ns = timer.read();
+        printStats(stdout, "Custom Poly1305", size, ns);
+    }
+
     try stdout.flush();
 }
 
