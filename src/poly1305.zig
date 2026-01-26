@@ -96,3 +96,21 @@ pub const Poly1305 = struct {
         return low + (high * 5);
     }
 };
+
+const hexToBytes = @import("root.zig").hexToBytes;
+
+test "RFC 7539 Test Vector #1 (Short)" {
+    const key = hexToBytes("85d6be7857556d337f4452fe42d506a80103808afb0db2fd4abff6af4149f51b");
+
+    const msg = "Cryptographic Forum Research Group";
+
+    const expected = hexToBytes("a8061dc1305136c6c22b8baf0c0127a9");
+
+    var poly = Poly1305.init(&key);
+    poly.update(msg);
+
+    var tag: [16]u8 = undefined;
+    poly.finish(&tag);
+
+    try std.testing.expectEqualSlices(u8, &expected, &tag);
+}

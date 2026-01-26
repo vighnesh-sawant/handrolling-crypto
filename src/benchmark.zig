@@ -5,7 +5,7 @@ const mem = std.mem;
 const CustomChaCha = @import("root.zig").ChaCha20;
 const CustomPoly1305 = @import("poly1305.zig").Poly1305;
 
-const DATA_SIZE = 1024 * 1024 * 100;
+const DATA_SIZE = 1024 * 1024 * 256 * 32;
 const CHUNK_SIZE = 4096;
 
 pub fn main() !void {
@@ -76,7 +76,7 @@ pub fn main() !void {
     try stdout.print("\nRunning Poly1305 Benchmark...\n", .{});
     try stdout.print("--------------------------------------------------\n", .{});
     try stdout.flush();
-    const size = 256 * 1024 * 1024;
+    const size = 256 * 1024 * 1024 * 16;
     const buffer = try allocator.alloc(u8, size);
     defer allocator.free(buffer);
     @memset(buffer, 0xAA);
