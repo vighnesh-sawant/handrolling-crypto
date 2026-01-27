@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Zig Crypto Benchmarks</title>
+    <style>
+        :root { --bg: #0d1117; --card: #161b22; --text: #c9d1d9; --accent: #f7a41d; --green: #238636; }
+        body { background: var(--bg); color: var(--text); font-family: system-ui, sans-serif; padding: 20px; display: flex; flex-direction: column; align-items: center; }
+        .container { max-width: 800px; width: 100%; }
+        h1 { border-bottom: 2px solid var(--accent); padding-bottom: 10px; margin-bottom: 30px; }
+        
+        .card { background: var(--card); border: 1px solid #30363d; border-radius: 6px; padding: 20px; margin-bottom: 20px; }
+        .card h2 { margin-top: 0; font-size: 1.2rem; color: #8b949e; }
+        
+        .row { display: flex; align-items: center; margin-bottom: 15px; }
+        .label { width: 120px; font-weight: bold; }
+        .bar-container { flex: 1; background: #21262d; height: 24px; border-radius: 4px; overflow: hidden; margin: 0 15px; }
+        .bar { height: 100%; transition: width 0.5s; display: flex; align-items: center; justify-content: flex-end; padding-right: 8px; font-size: 0.8rem; font-weight: bold; color: black; }
+        .std-bar { background: #8b949e; }
+        .custom-bar { background: var(--accent); }
+        .val { width: 80px; text-align: right; font-family: monospace; }
+        
+        .meta { text-align: center; color: #8b949e; font-size: 0.9rem; margin-top: 40px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>⚡ Zig AVX2 Performance Tracker</h1>
+
+        <div class="card">
+            <h2>ChaCha20 (GB/s)</h2>
+            <div class="row">
+                <span class="label">StdLib</span>
+                <div class="bar-container"><div id="bar-chacha-std" class="bar std-bar" style="width: 0%"></div></div>
+                <span id="val-chacha-std" class="val">--</span>
+            </div>
+            <div class="row">
+                <span class="label">Custom AVX2</span>
+                <div class="bar-container"><div id="bar-chacha-custom" class="bar custom-bar" style="width: 0%"></div></div>
+                <span id="val-chacha-custom" class="val">--</span>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Poly1305 (GB/s)</h2>
+            <div class="row">
+                <span class="label">StdLib</span>
+                <div class="bar-container"><div id="bar-poly-std" class="bar std-bar" style="width: 0%"></div></div>
+                <span id="val-poly-std" class="val">--</span>
+            </div>
+            <div class="row">
+                <span class="label">Custom AVX2</span>
+                <div class="bar-container"><div id="bar-poly-custom" class="bar custom-bar" style="width: 0%"></div></div>
+                <span id="val-poly-custom" class="val">--</span>
+            </div>
+        </div>
+
+        <div class="meta">
+            Last Updated: <span id="timestamp">Loading...</span><br>
+            Running on GitHub Actions (Standard_DS2_v2)
+        </div>
+    </div>
+
+    <script>
+        fetch('data.json')
+            .then(res => res.json())
+            .then(data => {
+                document.getElementById('timestamp').innerText = new Date(data.timestamp * 1000).toLocaleString();
+
+                const update = (name, val, max) => {
+                    document.getElementById(`val-${name}`).innerText = val.toFixed(2);
+                    document.getElementById(`bar-${name}`).style.width = (val / max * 100) + "%";
+                };
+
+                const maxCha = Math.max(data.chacha_std_gbps, data.chacha_custom_gbps) * 1.1;
+                const maxPoly = Math.max(data.poly_std_gbps, data.poly_custom_gbps) * 1.1;
+
+                update('chacha-std', data.chacha_std_gbps, maxCha);
+                update('chacha-custom', data.chacha_custom_gbps, maxCha);
+                update('poly-std', data.poly_std_gbps, maxPoly);
+                update('poly-custom', data.poly_custom_gbps, maxPoly);
+            })
+            .catch(err => {
+                document.getElementById('timestamp').innerText = "Error loading data.json";
+                console.error(err);
+            });
+    </script>
+</body>
+</html>
