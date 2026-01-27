@@ -2,7 +2,7 @@ const std = @import("std");
 const time = std.time;
 const mem = std.mem;
 
-const CustomChaCha = @import("root.zig").ChaCha20;
+const CustomChaCha = @import("chacha20.zig").ChaCha20;
 const CustomPoly1305 = @import("poly1305.zig").Poly1305;
 
 const DATA_SIZE = 1024 * 1024 * 256 * 32;
@@ -26,17 +26,18 @@ pub fn main() !void {
 
     std.crypto.random.bytes(input);
 
-    try stdout.print("\nRunning ChaCha20 Benchmark...\n", .{});
-    try stdout.print("Data Size: {d} MB | Chunk Size: {d} KB\n", .{ DATA_SIZE / 1024 / 1024, CHUNK_SIZE / 1024 });
-    try stdout.print("--------------------------------------------------\n", .{});
-    try stdout.flush();
+    // try stdout.print("\nRunning ChaCha20 Benchmark...\n", .{});
+    // try stdout.print("Data Size: {d} MB | Chunk Size: {d} KB\n", .{ DATA_SIZE / 1024 / 1024, CHUNK_SIZE / 1024 });
+    // try stdout.print("--------------------------------------------------\n", .{});
+    // try stdout.flush();
+
+    var timer = try time.Timer.start();
     {
         var counter: u32 = 0;
         const cipher = std.crypto.stream.chacha.ChaCha20IETF;
         cipher.xor(output, input, counter, key, nonce);
         counter += 1;
 
-        var timer = try time.Timer.start();
         var total_bytes: usize = 0;
 
         while (total_bytes < DATA_SIZE) {
@@ -48,17 +49,18 @@ pub fn main() !void {
             total_bytes += CHUNK_SIZE;
         }
 
-        const ns = timer.read();
-        printStats(stdout, "StdLib ", total_bytes, ns);
+        // printStats(stdout, "StdLib ", total_bytes, ns);
     }
+
+    const ns_chacha_std = timer.read();
 
     try stdout.flush();
 
+    timer = try time.Timer.start();
     {
         var cipher = CustomChaCha.init(&key, &nonce, 0);
         cipher.xor(output, input);
 
-        var timer = try time.Timer.start();
         var total_bytes: usize = 0;
 
         while (total_bytes < DATA_SIZE) {
@@ -69,13 +71,14 @@ pub fn main() !void {
             total_bytes += CHUNK_SIZE;
         }
 
-        const ns = timer.read();
-        printStats(stdout, "Custom Impl ", total_bytes, ns);
+        // printStats(stdout, "Custom Impl ", total_bytes, ns);
     }
-    try stdout.flush();
-    try stdout.print("\nRunning Poly1305 Benchmark...\n", .{});
-    try stdout.print("--------------------------------------------------\n", .{});
-    try stdout.flush();
+
+    const ns_chacha_custom = timer.read();
+    // try stdout.flush();
+    // try stdout.print("\nRunning Poly1305 Benchmark...\n", .{});
+    // try stdout.print("--------------------------------------------------\n", .{});
+    // try stdout.flush();
     const size = 256 * 1024 * 1024 * 16;
     const buffer = try allocator.alloc(u8, size);
     defer allocator.free(buffer);
@@ -83,27 +86,40 @@ pub fn main() !void {
 
     var tag: [16]u8 = undefined;
 
+    timer = try time.Timer.start();
     {
-        var timer = try std.time.Timer.start();
-
         var poly = std.crypto.onetimeauth.Poly1305.init(&key);
         poly.update(buffer);
         poly.final(&tag);
         std.mem.doNotOptimizeAway(&tag);
 
-        const ns = timer.read();
-        printStats(stdout, "StdLib Poly1305", size, ns);
+        // printStats(stdout, "StdLib Poly1305", size, ns);
     }
-    {
-        var timer = try std.time.Timer.start();
 
+    const ns_poly_std = timer.read();
+
+    timer = try time.Timer.start();
+    {
         var poly = CustomPoly1305.init(&key);
         poly.update(buffer);
         poly.finish(&tag);
         std.mem.doNotOptimizeAway(&tag);
-        const ns = timer.read();
-        printStats(stdout, "Custom Poly1305", size, ns);
+        // printStats(stdout, "Custom Poly1305", size, ns);
     }
+
+    const ns_poly_custom = timer.read();
+    const size_gb = @as(f64, @floatFromInt(DATA_SIZE)) / 1_000_000_000.0;
+
+    const results = .{
+        .timestamp = std.time.timestamp(),
+        .chacha_std_gbps = size_gb / (@as(f64, @floatFromInt(ns_chacha_std)) / 1e9),
+        .chacha_custom_gbps = size_gb / (@as(f64, @floatFromInt(ns_chacha_custom)) / 1e9),
+        .poly_std_gbps = size_gb / (@as(f64, @floatFromInt(ns_poly_std)) / 1e9),
+        .poly_custom_gbps = size_gb / (@as(f64, @floatFromInt(ns_poly_custom)) / 1e9),
+    };
+
+    var sj: std.json.Stringify = .{ .writer = stdout, .options = .{} };
+    try sj.write(results);
 
     try stdout.flush();
 }

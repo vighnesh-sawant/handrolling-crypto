@@ -97,7 +97,7 @@ pub const Poly1305 = struct {
     }
 };
 
-const hexToBytes = @import("root.zig").hexToBytes;
+const hexToBytes = @import("chacha20.zig").hexToBytes;
 
 test "RFC 7539 Test Vector #1 (Short)" {
     const key = hexToBytes("85d6be7857556d337f4452fe42d506a80103808afb0db2fd4abff6af4149f51b");

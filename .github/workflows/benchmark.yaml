@@ -1,0 +1,33 @@
+name: Deploy Benchmark Page
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  benchmark-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.13.0
+
+      - name: Build Benchmark (AVX2)
+        run: zig build -Doptimize=ReleaseFast -Dcpu=x86_64_v3
+
+      - name: Run & Save Results
+        run: |
+          ./zig-out/bin/crypto_bench > dashboard/data.json
+          cat dashboard/data.json
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dashboard  
