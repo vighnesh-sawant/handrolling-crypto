@@ -1,18 +1,14 @@
 const std = @import("std");
-const ChaCha20 = @import("root.zig").ChaCha20;
+const ChaCha20 = @import("chacha20.zig").ChaCha20;
 
 pub const Csrng = struct {
     cipher: ChaCha20,
 
     const zero_nonce = [_]u8{0} ** 12;
 
-    pub fn init() !Csrng {
-        var seed: [32]u8 = undefined;
-        //blocking!
-        try std.posix.getrandom(&seed);
-
+    pub fn init(seed: *const [32]u8) Csrng {
         return Csrng{
-            .cipher = ChaCha20.init(&seed, &zero_nonce, 0),
+            .cipher = ChaCha20.init(seed, &zero_nonce, 0),
         };
     }
 
@@ -39,7 +35,9 @@ pub const Csrng = struct {
 };
 
 test "CSRNG test" {
-    var csrng = try Csrng.init();
+    var seed: [32]u8 = undefined;
+    try std.posix.getrandom(&seed);
+    var csrng = try Csrng.init(&seed);
 
     const r = csrng.random();
 

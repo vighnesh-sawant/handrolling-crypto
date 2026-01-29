@@ -1,4 +1,4 @@
-name: Deploy Benchmark Page
+name: Deploy Crypto Dashboard
 
 on:
   push:
@@ -18,15 +18,32 @@ jobs:
         uses: mlugg/setup-zig@v2
         with:
           version: 0.15.2
+
       - name: Build Benchmark (AVX2)
         run: zig build -Doptimize=ReleaseFast -Dcpu=x86_64_v3
 
-      - name: Run & Save Results
+      - name: Run Benchmark & Save JSON
         run: |
           ./zig-out/bin/handrolling_crypto > dashboard/data.json
-          cat dashboard/data.json
+          
+          ls -lh dashboard/data.json
+          head -n 5 dashboard/data.json
+
+      - name: Build WASM Module
+
+        run: |
+          zig build-exe src/wasm_exports.zig \
+            -target wasm32-freestanding \
+            -rdynamic \
+            -fno-entry \
+            -O ReleaseFast \
+            -mcpu=mvp+simd128 \
+            --name wasm_exports
+          
+          mv wasm_exports.wasm dashboard/
+
       - name: Deploy to GitHub Pages
         uses: peaceiris/actions-gh-pages@v3
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          publish_dir: ./dashboard  
+          publish_dir: ./dashboard
